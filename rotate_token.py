@@ -81,6 +81,12 @@ def main():
     if missing:
         sys.exit(f"ERROR: 환경변수 누락: {', '.join(missing)}")
 
+    # 진단용: 토큰이 저장 과정에서 잘리거나 공백이 섞이지 않았는지 길이만 확인 (값 자체는 출력 안 함)
+    print(f"[디버그] IG_ACCESS_TOKEN 길이: {len(current_token)}자, 시작: {current_token[:6]!r}, 끝: {current_token[-6:]!r}")
+    if current_token != current_token.strip():
+        print("[경고] IG_ACCESS_TOKEN 앞/뒤에 공백이나 줄바꿈이 섞여 있습니다!")
+    current_token = current_token.strip()
+
     new_token = refresh_token(current_token)
     update_github_secret(repo, gh_pat, "IG_ACCESS_TOKEN", new_token)
     print("GitHub Secret 'IG_ACCESS_TOKEN' 자동 업데이트 완료")
