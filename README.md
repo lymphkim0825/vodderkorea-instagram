@@ -37,15 +37,21 @@ Meta의 공식 **Instagram Graph API**를 사용하며, GitHub Actions가 정해
 
 ## 2. 장기 액세스 토큰 발급 (최초 1회, 수동)
 
-위 "2. 액세스 토큰 생성" 단계에서 받은 토큰은 1시간짜리 단기 토큰입니다.
-`refresh_token.py`로 60일짜리 장기 토큰으로 교환합니다.
+위 "2. 액세스 토큰 생성" 단계에서 받은 토큰을 `refresh_token.py`로 60일짜리 장기
+토큰으로 발급받습니다. (공식 문서상으로는 최초 발급에 앱 시크릿이 필요한
+`ig_exchange_token`을 쓰라고 안내하지만, 이 프로젝트의 앱에서는 대시보드가 발급한
+토큰에 대해 그 호출이 항상 거부됐습니다. 대신 원래 60일 주기 갱신용인
+`ig_refresh_token`이 최초 발급에도 바로 통했습니다 — 앱 시크릿이 필요 없어 오히려
+더 간단합니다. `refresh_token.py`는 이 방식으로 되어 있습니다.)
 
 ```
-IG_APP_SECRET={앱 시크릿} SHORT_TOKEN={방금 받은 단기토큰} python refresh_token.py
+CURRENT_TOKEN={방금 받은 토큰} python refresh_token.py
 ```
 
-앱 시크릿은 Meta 앱 대시보드 > **설정 > 기본 설정**의 "앱 시크릿 코드"에서 확인합니다.
-출력된 `access_token` 값이 **IG_ACCESS_TOKEN** 입니다. (60일 후 만료 → 아래 7번 참고)
+출력된 `access_token` 값이 **IG_ACCESS_TOKEN** 입니다. (60일 후 만료 → 아래 6번 참고.
+참고로 IG_USER_ID는 대시보드 화면에 표시된 번호가 아니라, 이 토큰으로
+`https://graph.instagram.com/me?fields=id,username&access_token={토큰}` 을 호출했을 때
+나오는 `id` 값을 써야 합니다 — 두 값이 다를 수 있습니다.)
 
 ---
 
@@ -82,9 +88,9 @@ Claude Code를 쓰신다면, 이 폴더를 열어둔 상태에서 Claude Code에
 | `IG_ACCESS_TOKEN` | 2번에서 발급한 장기 토큰 |
 | `GH_PAT` | 토큰 자동 갱신에 필요 — 아래 6번에서 만드는 방법 설명 |
 
-`IG_APP_SECRET`은 GitHub Secret으로 등록할 필요가 없습니다. 최초 장기 토큰 발급(2번) 때만
-로컬에서 한 번 쓰고, 이후 60일마다의 자동 갱신(`rotate_token.py`)은 앱 시크릿 없이
-`IG_ACCESS_TOKEN` 자체만으로 갱신하는 더 단순한 방식(`ig_refresh_token`)을 씁니다.
+앱 시크릿은 어디에도 등록할 필요가 없습니다. 최초 발급(2번)과 60일마다의 자동
+갱신(`rotate_token.py`) 모두 `IG_ACCESS_TOKEN` 자체만으로 갱신하는 `ig_refresh_token`
+방식을 씁니다.
 
 ---
 
@@ -147,8 +153,6 @@ Settings > Secrets 화면에서 `IG_ACCESS_TOKEN`의 "Updated" 시각이 갱신�
 
 - **토큰 만료(60일)**: 6번의 자동 갱신 워크플로우를 설정해두면 신경 쓸 필요가 없습니다.
   설정하지 않았다면 `refresh_token.py`를 수동으로 다시 실행해 새 토큰을 GitHub Secrets에 직접 등록해야 합니다.
-  (단, `refresh_token.py`의 `ig_exchange_token`은 "단기 토큰 → 장기 토큰" 최초 교환용이고,
-  이미 장기 토큰을 갖고 있다면 `rotate_token.py`가 쓰는 `ig_refresh_token` 방식이 맞습니다.)
 - **권한 누락**: "Instagram 로그인이 포함된 API 설정" 화면의 기본 체크리스트는 메시지 권한 위주라
   `instagram_business_content_publish`가 빠져있기 쉽습니다. "권한 및 기능" 메뉴에서
   `instagram_business_basic`, `instagram_business_content_publish` 두 권한이 추가되어 있는지 꼭 확인하세요.
