@@ -2,9 +2,19 @@ name: Post to Instagram
 
 on:
   workflow_dispatch: {}
-  # 정기 자동 게시를 원하면 아래 주석을 해제하고 cron 시간을 설정하세요 (UTC 기준, KST -9시간)
-  # schedule:
-  #   - cron: "30 2 * * 2,5"   # 매주 화/금 오전 11:30 KST
+  schedule:
+    # 매주 화요일·금요일 오전 11:30 (KST) = UTC 02:30 (KST는 UTC+9)
+    # 필요에 맞게 요일/시간을 조정하세요. cron은 UTC 기준입니다.
+    - cron: "30 2 * * 2,5"
+
+# queue/ -> posted/ 로 옮기고 커밋·푸시하려면 쓰기 권한이 필요합니다.
+permissions:
+  contents: write
+
+# 이전 실행이 아직 큐를 정리하는 중일 때 다음 스케줄 실행과 겹치지 않도록 합니다.
+concurrency:
+  group: post-instagram
+  cancel-in-progress: false
 
 jobs:
   post:
@@ -12,6 +22,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # push 하려면 fetch-depth 1이면 충분하지만, rebase 안전을 위해 넉넉히 받습니다.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,8 +34,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Post carousel to Instagram
+      - name: Post next queued carousel to Instagram
+        id: post
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
         run: python post_to_instagram.py
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.post.outputs.posted }}" = "true" ]; then
+            echo "### ✅ 게시 완료: ${{ steps.post.outputs.queue_name }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ℹ️ 큐가 비어 있어 이번에는 게시하지 않았습니다." >> "$GITHUB_STEP_SUMMARY"
+          fi
