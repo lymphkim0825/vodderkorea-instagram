@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Instagram 캐러셀(carousel) 자동 게시 스크립트 — 큐(queue) 기반 순차 게시 버전.
+(2026-11-11 개정: 캐러셀 안에 영상(slide_NN.mp4)도 넣을 수 있도록 지원 추가)
 
 동작 방식:
 1. queue/ 폴더 아래의 하위 폴더들을 이름순(알파벳/숫자순)으로 정렬해서
    가장 앞선 폴더 하나를 "이번에 게시할 카드뉴스"로 고른다.
    (폴더가 없으면 "게시할 것 없음"으로 조용히 종료 — 실패 아님)
-2. 그 폴더 안의 slide_01.jpg ~ slide_09.jpg 를 GitHub raw URL로 참조해서
-   각각 IG 컨테이너(carousel item)로 업로드한다.
+2. 그 폴더 안의 slide_01 ~ slide_10 (.jpg/.jpeg 이미지 또는 .mp4 영상)을 파일명 순서대로
+   GitHub raw URL로 참조해서 각각 IG 컨테이너(carousel item)로 업로드한다.
+   영상 항목은 media_type=VIDEO 로 만들고, 처리가 끝날(FINISHED) 때까지 기다린다.
 3. 모든 컨테이너 id를 모아 캐러셀 컨테이너를 만든다 (그 폴더의 caption.txt 를 caption으로 사용).
 4. 캐러셀 컨테이너를 발행(publish)한다.
 5. 게시에 성공하면 해당 폴더를 queue/ 에서 posted/ 로 옮기고(= "완료" 표시),
@@ -38,6 +40,9 @@ GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_VERSION}"
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 QUEUE_DIR = os.path.join(REPO_ROOT, "queue")
 POSTED_DIR = os.path.join(REPO_ROOT, "posted")
+
+IMAGE_EXTS = (".jpg", ".jpeg")
+VIDEO_EXTS = (".mp4", ".mov")
 
 
 def set_output(name: str, value: str):
@@ -71,16 +76,22 @@ def get_image_base_url(queue_name: str) -> str:
     return f"https://raw.githubusercontent.com/{repo}/{branch}/queue/{queue_name}"
 
 
-def get_image_urls(queue_name: str) -> list:
+def get_media_items(queue_name: str) -> list:
+    """[(url, 'IMAGE'|'VIDEO'), ...] 를 파일명 순서대로 돌려준다."""
     item_dir = os.path.join(QUEUE_DIR, queue_name)
     files = sorted(
         f for f in os.listdir(item_dir)
-        if f.lower().startswith("slide_") and f.lower().endswith((".jpg", ".jpeg"))
+        if f.lower().startswith("slide_") and f.lower().endswith(IMAGE_EXTS + VIDEO_EXTS)
     )
     if not (2 <= len(files) <= 10):
-        sys.exit(f"ERROR: 캐러셀은 이미지 2~10장이 필요합니다. '{queue_name}' 폴더에는 현재 {len(files)}장.")
+        sys.exit(f"ERROR: 캐러셀은 이미지·영상 합계 2~10장이 필요합니다. '{queue_name}' 폴더에는 현재 {len(files)}장.")
     base = get_image_base_url(queue_name)
-    return [f"{base}/{f}" for f in files]
+    return [(f"{base}/{f}", "VIDEO" if f.lower().endswith(VIDEO_EXTS) else "IMAGE") for f in files]
+
+
+# (하위 호환) 예전 이름도 남겨둔다.
+def get_image_urls(queue_name: str) -> list:
+    return [u for u, _ in get_media_items(queue_name)]
 
 
 def get_caption(queue_name: str) -> str:
@@ -94,20 +105,18 @@ def get_caption(queue_name: str) -> str:
     return text
 
 
-def create_item_container(ig_user_id: str, token: str, image_url: str) -> str:
-    resp = requests.post(
-        f"{GRAPH_BASE}/{ig_user_id}/media",
-        data={
-            "image_url": image_url,
-            "is_carousel_item": "true",
-            "access_token": token,
-        },
-        timeout=60,
-    )
-    data = resp.json()
-    if "id" not in data:
-        sys.exit(f"ERROR: 아이템 컨테이너 생성 실패 ({image_url}): {data}")
-    return data["id"]
+def create_item_container(ig_user_id: str, token: str, media_url: str, kind: str = "IMAGE") -> str:
+    data = {"is_carousel_item": "true", "access_token": token}
+    if kind == "VIDEO":
+        data["media_type"] = "VIDEO"
+        data["video_url"] = media_url
+    else:
+        data["image_url"] = media_url
+    resp = requests.post(f"{GRAPH_BASE}/{ig_user_id}/media", data=data, timeout=60)
+    result = resp.json()
+    if "id" not in result:
+        sys.exit(f"ERROR: 아이템 컨테이너 생성 실패 ({media_url}): {result}")
+    return result["id"]
 
 
 def create_carousel_container(ig_user_id: str, token: str, children_ids: list, caption: str) -> str:
@@ -128,7 +137,7 @@ def create_carousel_container(ig_user_id: str, token: str, children_ids: list, c
 
 
 def wait_until_ready(creation_id: str, token: str, timeout_sec: int = 120):
-    """일부 이미지는 처리에 시간이 걸릴 수 있어 상태를 폴링한다."""
+    """일부 이미지·영상은 처리에 시간이 걸릴 수 있어 상태를 폴링한다."""
     start = time.time()
     while time.time() - start < timeout_sec:
         resp = requests.get(
@@ -142,7 +151,7 @@ def wait_until_ready(creation_id: str, token: str, timeout_sec: int = 120):
             return
         if status == "ERROR":
             sys.exit(f"ERROR: 컨테이너 처리 실패: {data}")
-        time.sleep(3)
+        time.sleep(5)
     sys.exit(f"ERROR: 컨테이너({creation_id}) 처리 대기 시간 초과")
 
 
@@ -225,20 +234,24 @@ def main():
 
     print(f"이번에 게시할 항목: {queue_name}")
 
-    image_urls = get_image_urls(queue_name)
+    items = get_media_items(queue_name)
     caption = get_caption(queue_name)
-    print(f"이미지 {len(image_urls)}장, base_url={image_urls[0].rsplit('/', 1)[0]}")
+    n_video = sum(1 for _, k in items if k == "VIDEO")
+    print(f"이미지 {len(items) - n_video}장 + 영상 {n_video}편, base_url={items[0][0].rsplit('/', 1)[0]}")
 
     child_ids = []
-    for url in image_urls:
-        cid = create_item_container(ig_user_id, token, url)
-        print(f"  컨테이너 생성됨: {url} -> {cid}")
+    for url, kind in items:
+        cid = create_item_container(ig_user_id, token, url, kind)
+        if kind == "VIDEO":
+            # 영상 아이템은 서버 처리가 끝나야 캐러셀에 묶을 수 있다.
+            wait_until_ready(cid, token, timeout_sec=300)
+        print(f"  컨테이너 생성됨({kind}): {url} -> {cid}")
         child_ids.append(cid)
 
     carousel_id = create_carousel_container(ig_user_id, token, child_ids, caption)
     print(f"캐러셀 컨테이너 생성됨: {carousel_id}")
 
-    wait_until_ready(carousel_id, token)
+    wait_until_ready(carousel_id, token, timeout_sec=300 if n_video else 120)
 
     media_id = publish(ig_user_id, token, carousel_id)
     print(f"게시 완료! media_id={media_id}")
